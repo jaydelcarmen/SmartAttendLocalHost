@@ -51,8 +51,11 @@ class SignupPage {
         if (await this.checkEmailExists(email))
             return Swal.fire({ icon: 'error', title: 'Email already exists', text: 'Please use different email address' });
 
-        if (password.length < 6)
-            return Swal.fire({ icon: 'warning', title: 'Warning', text: 'Password must be at least 6 characters', confirmButtonColor: '#4e73df' });
+        if (password.length < 8)
+            return Swal.fire({ icon: 'warning', title: 'Warning', text: 'Password must be at least 8 characters', confirmButtonColor: '#4e73df' });
+
+        if (!/[^A-Za-z0-9]/.test(password))
+            return Swal.fire({ icon: 'warning', title: 'Warning', text: 'Password must contain at least one special character', confirmButtonColor: '#4e73df' });
 
         if (password !== confirmPassword)
             return Swal.fire({ icon: 'error', title: 'Error', text: 'Password do not match!' });
