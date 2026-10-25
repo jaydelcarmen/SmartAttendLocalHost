@@ -27,6 +27,7 @@ import smartattendLocal.Entity.Teacher;
 import smartattendLocal.Repository.CardsRepository;
 import smartattendLocal.Repository.StudentRepository;
 import smartattendLocal.Repository.TeacherRepository;
+import smartattendLocal.Repository.AttendanceRepository;
 import smartattendLocal.Service.StudentImportService;
 
 
@@ -50,6 +51,9 @@ public class StudentController {
 
     @Autowired
     private StudentImportService studentImportService;
+
+    @Autowired
+    private AttendanceRepository attendanceRepository;
 
     // ── Bulk import endpoints ─────────────────────────────────────────────────
 
@@ -274,7 +278,6 @@ public class StudentController {
         return ResponseEntity.ok(student);
     }
 
-    // DELETE NG STUDENT
     @DeleteMapping("/delete/{id}")
     public ResponseEntity<?> deleteStudent(@PathVariable int id, Authentication authentication) {
         String teacherEmail = authentication.getName();
@@ -284,7 +287,13 @@ public class StudentController {
                     .badRequest()
                     .body("Teacher not found");
         }
-        studentRepository.deleteById(id);
-        return ResponseEntity.ok("Student with id " + id + " has been deleted");
+
+        try {
+            attendanceRepository.deleteByStudentId(id);
+            studentRepository.deleteById(id);
+            return ResponseEntity.ok("Student with id " + id + " has been deleted");
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Error deleting student: " + e.getMessage());
+        }
     }
 }

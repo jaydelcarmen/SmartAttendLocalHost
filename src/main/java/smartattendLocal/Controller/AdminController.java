@@ -129,15 +129,19 @@ public class AdminController {
         Teacher teacher = teacherRepository.findById(id).orElse(null);
         if (teacher == null) return ResponseEntity.badRequest().body("Teacher not found");
 
-        // delete in order: attendance → students → cards → teacher
-        List<Card> cards = cardsRepository.findByTeacher_Email(teacher.getEmail());
-        for (Card card : cards) {
-            attendanceRepository.deleteByCardId(card.getId());
-            studentRepository.deleteByCardId(card.getId());
+        try {
+            // delete in order: attendance_photo → attendance → cards → students → teacher
+            List<Card> cards = cardsRepository.findByTeacher_Email(teacher.getEmail());
+            for (Card card : cards) {
+                attendanceRepository.deleteByCardId(card.getId());
+            }
+            cardsRepository.deleteAll(cards);
+            studentRepository.deleteByTeacherId(id);
+            teacherRepository.deleteById(id);
+            return ResponseEntity.ok("Deleted");
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Error deleting teacher: " + e.getMessage());
         }
-        cardsRepository.deleteAll(cards);
-        teacherRepository.deleteById(id);
-        return ResponseEntity.ok("Deleted");
     }
 
     @GetMapping("/all")

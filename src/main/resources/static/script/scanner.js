@@ -6,6 +6,12 @@ class ScannerPage {
         this.scanner  = null;
         this.isRunning    = false;
         this.isProcessing = false;
+        this.currentAttendanceId = null;
+        this.photoCanvas = null;
+        this.photoStream = null;
+        this.countdownValue = 0;
+        this.countdownInterval = null;
+        this.isCountingDown = false;
     }
 
     init() {
@@ -54,20 +60,21 @@ class ScannerPage {
         this.isProcessing = true;
         try {
             const res    = await fetch('/attendance/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qrcode: qrCode, cardId: this.cardId }) });
-            const result = await res.text();
+            const result = await res.json();
             if (res.ok) {
                 this.beep.volume = 1.0;
                 this.beep.play();
-                await Swal.fire({ icon: 'success', title: 'Scanned', text: result, timer: 1500, showConfirmButton: false });
-                this.loadStudent();
+                this.currentAttendanceId = result.attendanceId;
+                await Swal.fire({ icon: 'success', title: 'Scanned', text: result.message, timer: 1500, showConfirmButton: false });
+                this.openPhotoModal();
             } else {
                 this.errorSfx.play();
-                Swal.fire({ icon: 'error', title: 'Error', text: result, timer: 1500, showConfirmButton: false });
+                Swal.fire({ icon: 'error', title: 'Error', text: result.message || 'Scan failed', timer: 1500, showConfirmButton: false });
+                this.isProcessing = false;
             }
         } catch (err) {
             Swal.fire({ title: 'Error', text: 'Unable to connect to the server: ' + err.message });
-        } finally {
-            setTimeout(() => { this.isProcessing = false; }, 3000);
+            this.isProcessing = false;
         }
     }
 
@@ -79,17 +86,192 @@ class ScannerPage {
             tbody.innerHTML = '';
             data.forEach((student, index) => {
                 const tr = document.createElement('tr');
+                const photoBtn = student.hasPhoto ? `<button class="btn-view-photo" onclick="scannerPage.viewPhoto(${student.attendanceId})">View Photo</button>` : '<span class="no-photo">No Photo</span>';
                 tr.innerHTML = `
                     <td>${index + 1}</td>
                     <td>${student.name}</td>
                     <td>${student.studentNumber}</td>
                     <td>${student.email}</td>
                     <td>${new Date(student.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                    <td>${student.status}</td>`;
+                    <td>${student.status}</td>
+                    <td>${photoBtn}</td>`;
                 tbody.appendChild(tr);
             });
         } catch (err) {
             Swal.fire({ icon: 'error', title: 'Error', text: 'Error loading students: ' + err });
+        }
+    }
+
+    openPhotoModal() {
+        const modal = document.getElementById('photoCaptureModal');
+        modal.style.display = 'block';
+        this.startPhotoCamera();
+    }
+
+    closePhotoModal() {
+        this.stopPhotoCamera();
+        document.getElementById('photoCaptureModal').style.display = 'none';
+        document.getElementById('photoPreview').style.display = 'none';
+        document.getElementById('photoCapturing').style.display = 'flex';
+        document.getElementById('countdownContainer').style.display = 'none';
+        document.getElementById('captureBtn').style.display = 'block';
+        document.getElementById('retakeBtn').style.display = 'none';
+        document.getElementById('submitBtn').style.display = 'none';
+        this.isProcessing = false;
+    }
+
+    async startPhotoCamera() {
+        try {
+            this.photoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            const canvas = document.getElementById('photoCapturing');
+            if (!canvas.querySelector('video')) {
+                const video = document.createElement('video');
+                video.srcObject = this.photoStream;
+                video.autoplay = true;
+                video.playsinline = true;
+                video.style.width = '100%';
+                video.style.maxHeight = '400px';
+                video.style.objectFit = 'cover';
+                canvas.innerHTML = '';
+                canvas.appendChild(video);
+                video.onloadedmetadata = () => {
+                    this.startCountdown();
+                };
+            }
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'Camera Error', text: 'Unable to access camera: ' + err.message });
+            this.closePhotoModal();
+        }
+    }
+
+    stopPhotoCamera() {
+        if (this.photoStream) {
+            this.photoStream.getTracks().forEach(track => track.stop());
+            this.photoStream = null;
+        }
+    }
+
+    startCountdown() {
+        if (this.isCountingDown) return;
+
+        this.isCountingDown = true;
+        this.countdownValue = 5;
+
+        document.getElementById('photoCapturing').style.display = 'none';
+        document.getElementById('countdownContainer').style.display = 'flex';
+        document.getElementById('captureBtn').style.display = 'none';
+
+        document.getElementById('countdownTimer').textContent = this.countdownValue;
+
+        this.countdownInterval = setInterval(() => {
+            this.countdownValue--;
+            document.getElementById('countdownTimer').textContent = this.countdownValue;
+
+            if (this.countdownValue <= 0) {
+                clearInterval(this.countdownInterval);
+                this.countdownInterval = null;
+                this.isCountingDown = false;
+                this.capturePhotoFromCamera();
+            }
+        }, 1000);
+    }
+
+    stopPhotoCamera() {
+        if (this.photoStream) {
+            this.photoStream.getTracks().forEach(track => track.stop());
+            this.photoStream = null;
+        }
+        if (this.countdownInterval) {
+            clearInterval(this.countdownInterval);
+            this.countdownInterval = null;
+            this.isCountingDown = false;
+        }
+    }
+
+    capturePhotoFromCamera() {
+        const canvas = document.getElementById('photoCapturing');
+        const video = canvas.querySelector('video');
+        if (!video) {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Video stream not available' });
+            return;
+        }
+
+        this.photoCanvas = document.createElement('canvas');
+        this.photoCanvas.width = video.videoWidth;
+        this.photoCanvas.height = video.videoHeight;
+        const ctx = this.photoCanvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+
+        document.getElementById('photoImage').src = this.photoCanvas.toDataURL('image/jpeg');
+        document.getElementById('photoPreview').style.display = 'block';
+        document.getElementById('photoCapturing').style.display = 'none';
+        document.getElementById('captureBtn').style.display = 'none';
+        document.getElementById('retakeBtn').style.display = 'block';
+        document.getElementById('submitBtn').style.display = 'block';
+    }
+
+    retakePhoto() {
+        document.getElementById('photoPreview').style.display = 'none';
+        document.getElementById('photoCapturing').style.display = 'flex';
+        document.getElementById('countdownContainer').style.display = 'none';
+        document.getElementById('captureBtn').style.display = 'none';
+        document.getElementById('retakeBtn').style.display = 'none';
+        document.getElementById('submitBtn').style.display = 'none';
+        this.photoCanvas = null;
+        this.startCountdown();
+    }
+
+    async submitPhoto() {
+        if (!this.photoCanvas || !this.currentAttendanceId) {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'No photo or attendance ID' });
+            return;
+        }
+
+        try {
+            this.photoCanvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                formData.append('photo', blob, 'photo.jpg');
+
+                const res = await fetch(`/attendance/${this.currentAttendanceId}/capture-photo`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    Swal.fire({ icon: 'success', title: 'Photo Saved', text: 'Attendance marked successfully!', timer: 1500, showConfirmButton: false });
+                    this.closePhotoModal();
+                    this.loadStudent();
+                    this.isProcessing = false;
+                } else {
+                    const error = await res.text();
+                    Swal.fire({ icon: 'error', title: 'Upload Failed', text: error });
+                }
+            }, 'image/jpeg');
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to upload photo: ' + err.message });
+        }
+    }
+
+    async viewPhoto(attendanceId) {
+        try {
+            const res = await fetch(`/attendance/${attendanceId}/photo`);
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                Swal.fire({
+                    title: 'Student Photo',
+                    imageUrl: url,
+                    imageWidth: 300,
+                    imageHeight: 300,
+                    imageAlt: 'Student Photo',
+                    confirmButtonText: 'Close'
+                }).then(() => URL.revokeObjectURL(url));
+            } else {
+                Swal.fire({ icon: 'error', title: 'Error', text: 'Photo not found' });
+            }
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to load photo: ' + err.message });
         }
     }
 
@@ -210,3 +392,8 @@ function studentTable()            { scannerPage.studentTable(); }
 function openCamera()              { scannerPage.openCamera(); }
 function exportReport(format)      { scannerPage.exportReport(format); }
 function toggleExportMenu()        { scannerPage.toggleExportMenu(); }
+function openPhotoModal()          { scannerPage.openPhotoModal(); }
+function closePhotoModal()         { scannerPage.closePhotoModal(); }
+function capturePhotoFromCamera()  { scannerPage.capturePhotoFromCamera(); }
+function retakePhoto()             { scannerPage.retakePhoto(); }
+function submitPhoto()             { scannerPage.submitPhoto(); }

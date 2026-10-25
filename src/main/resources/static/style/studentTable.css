@@ -298,7 +298,7 @@ body {
     border-radius: 14px;
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
     padding: 18px 20px 22px;
-    overflow-x: auto;
+    overflow: visible;
     -webkit-overflow-scrolling: touch;
 }
 
@@ -317,7 +317,8 @@ body {
 .student-table th,
 .student-table td {
     padding: 9px 10px;
-    text-align: left;
+    text-align: center;
+    vertical-align: middle;
 }
 
 .student-table th {
@@ -331,9 +332,10 @@ body {
 /* ── Row action buttons ── */
 .btn-container {
     display: flex;
-    position: relative;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .send-qr-btn {
@@ -346,6 +348,9 @@ body {
     box-shadow: 0 5px 18px rgba(0, 0, 0, 0.2);
     cursor: pointer;
     white-space: nowrap;
+    flex: 1;
+    min-width: 100px;
+    text-align: center;
 }
 
 .send-qr-btn:hover {
@@ -361,6 +366,11 @@ body {
     cursor: pointer;
 }
 
+td:has(.menu-btn) {
+    overflow: visible;
+    position: relative;
+}
+
 .menu-dropdown {
     display: none;
     position: absolute;
@@ -374,6 +384,7 @@ body {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
     z-index: 1000;
 }
+
 
 .menu-dropdown div {
     padding: 10px;

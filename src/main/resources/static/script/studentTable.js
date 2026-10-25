@@ -117,7 +117,10 @@ class StudentTable {
                 <td>${student.studentNumber}</td>
                 <td>${student.email}</td>
                 <td>${student.sex}</td>
-                <td class="btn-container">
+                <td style="text-align: center;">
+                    <button class="send-qr-btn" onclick="studentMgr.viewPhotos(${student.id})">View Photos</button>
+                </td>
+                <td style="position: relative; text-align: center;">
                     <button class="send-qr-btn" onclick="studentMgr.sendQR(${student.id})">Send QR</button>
                     <button class="menu-btn">⋮</button>
                     <div class="menu-dropdown">
@@ -299,6 +302,159 @@ class StudentTable {
         const a    = document.createElement('a');
         a.href = url; a.download = 'import_errors.csv'; a.click();
         URL.revokeObjectURL(url);
+    }
+
+    // ── Photo viewing ─────────────────────────────────────────────────────────
+
+    async viewPhotos(studentId) {
+        try {
+            const res = await fetch(`/attendance/student/${studentId}/photos`);
+            if (!res.ok) {
+                return Swal.fire({ icon: 'error', title: 'Error', text: await res.text() });
+            }
+            const photos = await res.json();
+            this.displayPhotos(photos);
+        } catch (err) {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Error loading photos: ' + err });
+        }
+    }
+
+    displayPhotos(photos) {
+        const container = document.getElementById('photoViewerContainer');
+        if (photos.length === 0) {
+            container.innerHTML = '<p style="text-align: center; padding: 20px;">No photos available for this student.</p>';
+        } else {
+            container.innerHTML = photos.map(photo => `
+                <div style="margin-bottom: 25px; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9;">
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">
+                        <strong>Date:</strong> ${new Date(photo.timestamp).toLocaleString()}
+                    </p>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">
+                        <strong>Class:</strong> ${photo.className}
+                    </p>
+                    <p style="margin: 5px 0; font-size: 12px; color: #666;">
+                        <strong>Status:</strong> <span style="color: ${photo.status === 'Present' ? '#16a34a' : photo.status === 'Late' ? '#f59e0b' : '#dc2626'};">${photo.status}</span>
+                    </p>
+                    <img src="${photo.photoUrl}" alt="Attendance photo" style="max-width: 100%; height: auto; border-radius: 8px; max-height: 400px; margin: 10px 0; display: block;">
+                    <div style="display: flex; gap: 10px; margin-top: 10px; justify-content: center;">
+                        <button onclick="studentMgr.approvePhoto(${photo.attendanceId})" style="background-color: #16a34a; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            <i class="fa-solid fa-check"></i> Approve
+                        </button>
+                        <button onclick="studentMgr.revokeAttendance(${photo.attendanceId}, '${photo.photoUrl}')" style="background-color: #dc2626; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            <i class="fa-solid fa-ban"></i> Revoke
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        document.getElementById('photoViewerModal').style.display = 'block';
+    }
+
+    closePhotoViewer() {
+        document.getElementById('photoViewerModal').style.display = 'none';
+    }
+
+    approvePhoto(attendanceId) {
+        Swal.fire({
+            icon: 'success',
+            title: 'Photo Approved',
+            text: 'You have approved this attendance record. The photo verification is complete.',
+            allowOutsideClick: false,
+            timer: 2000,
+            showConfirmButton: false
+        }).then(() => {
+            document.getElementById('photoViewerModal').style.display = 'none';
+        });
+    }
+
+    async revokeAttendance(attendanceId, photoUrl) {
+        const result = await Swal.fire({
+            title: 'Revoke Attendance?',
+            html: `
+                <div style="text-align: left; margin: 15px 0;">
+                    <p style="margin-bottom: 10px;">This action will revoke the student's attendance credit because the photo verification indicates the person may not be the correct student.</p>
+                    <p style="margin-bottom: 15px; font-weight: 600; color: #0F6577;">The student will be notified via email with:</p>
+                    <ul style="text-align: left; display: inline-block;">
+                        <li>The captured photo</li>
+                        <li>Reason for revocation</li>
+                        <li>Class details</li>
+                        <li>Your contact information</li>
+                    </ul>
+                    <div style="margin-top: 15px; border: 1px solid #ddd; border-radius: 4px; padding: 10px; max-height: 250px; overflow-y: auto;">
+                        <img src="${photoUrl}" alt="Photo preview" style="max-width: 100%; height: auto; border-radius: 4px;">
+                    </div>
+                </div>
+            `,
+            icon: 'warning',
+            showCancelButton: true,
+            cancelButtonText: 'Cancel',
+            confirmButtonText: 'Yes, Revoke',
+            confirmButtonColor: '#dc2626',
+            cancelButtonColor: '#3085d6',
+            reverseButtons: true
+        });
+
+        if (!result.isConfirmed) return;
+
+        Swal.fire({
+            title: 'Processing...',
+            text: 'Revoking attendance and sending email notification...',
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading()
+        });
+
+        try {
+            const res = await fetch(`/attendance/${attendanceId}/revoke`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            Swal.close();
+
+            if (res.ok) {
+                const data = await res.json();
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Attendance Revoked',
+                    html: `
+                        <p><strong>✓ Attendance status changed from ${data.originalStatus} to Absent</strong></p>
+                        <p style="margin-top: 10px; font-size: 14px;">
+                            <i class="fa-solid fa-envelope" style="color: #0F6577;"></i>
+                            Email notification sent to <strong>${data.studentEmail}</strong> with:
+                        </p>
+                        <ul style="text-align: left; display: inline-block; margin-top: 8px; font-size: 13px;">
+                            <li>Captured photo</li>
+                            <li>Reason for revocation</li>
+                            <li>Class details and timestamp</li>
+                            <li>Your contact information for appeals</li>
+                        </ul>
+                        <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                            Revoked at: ${new Date(data.revokedAt).toLocaleString()}<br>
+                            Revoked by: ${data.revokedBy}
+                        </p>
+                    `,
+                    allowOutsideClick: false,
+                    confirmButtonText: 'OK'
+                }).then(() => {
+                    document.getElementById('photoViewerModal').style.display = 'none';
+                    this.loadStudent();
+                });
+            } else {
+                const errorText = await res.text();
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: errorText || 'Failed to revoke attendance'
+                });
+            }
+        } catch (err) {
+            Swal.close();
+            Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: 'Error revoking attendance: ' + err
+            });
+        }
     }
 }
 

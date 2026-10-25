@@ -120,19 +120,52 @@ public class CardController {
     @Transactional
     @DeleteMapping("/delete/{id}")
     public ResponseEntity<?> deleteCard(@PathVariable int id, Authentication authentication) {
-        String teacherEmail = authentication.getName();
-        Teacher teacher = teacherRepository.findByEmail(teacherEmail);
-        if (teacher == null) return ResponseEntity.badRequest().body("Teacher not found");
+        try {
+            String teacherEmail = authentication.getName();
+            Teacher teacher = teacherRepository.findByEmail(teacherEmail);
+            if (teacher == null) {
+                return ResponseEntity.status(403).body("Teacher not found");
+            }
 
-        Card card = cardsRepository.findById(id).orElse(null);
-        if (card == null) return ResponseEntity.badRequest().body("Card not found");
+            Card card = cardsRepository.findById(id).orElse(null);
+            if (card == null) {
+                return ResponseEntity.status(404).body("Card not found");
+            }
 
-        // delete child records first to avoid FK constraint violation
-        attendanceRepository.deleteByCardId(id);
-        studentRepository.deleteByCardId(id);
-        cardsRepository.deleteById(id);
+            // Authorization check: verify card belongs to authenticated teacher
+            if (card.getTeacher().getId() != teacher.getId()) {
+                return ResponseEntity.status(403).body("Unauthorized: Card does not belong to this teacher");
+            }
 
-        return ResponseEntity.ok("Card deleted");
+            // delete child records first to avoid FK constraint violation
+            try {
+                attendanceRepository.deleteByCardId(id);
+            } catch (Exception e) {
+                System.err.println("Error deleting attendance records for card " + id + ": " + e.getMessage());
+                return ResponseEntity.status(500).body("Failed to delete attendance records");
+            }
+
+            try {
+                studentRepository.deleteByCardId(id);
+            } catch (Exception e) {
+                System.err.println("Error deleting students for card " + id + ": " + e.getMessage());
+                return ResponseEntity.status(500).body("Failed to delete students associated with card");
+            }
+
+            try {
+                cardsRepository.deleteById(id);
+            } catch (Exception e) {
+                System.err.println("Error deleting card " + id + ": " + e.getMessage());
+                return ResponseEntity.status(500).body("Failed to delete card");
+            }
+
+            return ResponseEntity.ok("Card deleted successfully");
+
+        } catch (Exception e) {
+            System.err.println("Unexpected error in deleteCard: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).body("An unexpected error occurred while deleting the card");
+        }
     }
 
     @PutMapping("/{id}")

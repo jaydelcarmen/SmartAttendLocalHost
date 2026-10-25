@@ -1,16 +1,23 @@
 package smartattendLocal.Controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import smartattendLocal.Entity.Attendance;
 import smartattendLocal.Entity.Card;
 import smartattendLocal.Entity.Student;
+import smartattendLocal.Entity.Teacher;
 import smartattendLocal.Repository.AttendanceRepository;
 import smartattendLocal.Repository.CardsRepository;
 import smartattendLocal.Repository.StudentRepository;
+import smartattendLocal.Service.PhotoService;
+import smartattendLocal.Service.EmailService;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -29,6 +36,12 @@ public class AttendanceController {
 
     @Autowired
     private CardsRepository cardsRepository;
+
+    @Autowired
+    private PhotoService photoService;
+
+    @Autowired
+    private EmailService emailService;
 
     @PostMapping("/scan")
     public ResponseEntity<?> scanAttendance(@RequestBody Map<String, String> request) {
@@ -74,7 +87,6 @@ public class AttendanceController {
         LocalTime now = LocalTime.now();
         String status;
 
-        // check class day
         if (card.getClassDays() != null && !card.getClassDays().isEmpty()) {
             String todayAbbr = LocalDate.now().getDayOfWeek()
                     .getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
@@ -98,10 +110,90 @@ public class AttendanceController {
         attendance.setCard(card);
         attendance.setScanTime(LocalDateTime.now());
         attendance.setStatus(status);
+        attendance.setPhotoStatus("PENDING");
 
         attendanceRepository.save(attendance);
 
-        return ResponseEntity.ok("Scan successful");
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Scan successful - Photo required");
+        response.put("attendanceId", attendance.getId());
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{attendanceId}/capture-photo")
+    public ResponseEntity<?> capturePhoto(@PathVariable int attendanceId, @RequestParam("photo") MultipartFile file) {
+        try {
+            Attendance attendance = attendanceRepository.findById(attendanceId).orElse(null);
+            if (attendance == null) {
+                return ResponseEntity.badRequest().body("Attendance record not found");
+            }
+
+            if (!photoService.isValidImageFile(file)) {
+                return ResponseEntity.badRequest().body("Invalid file type. Only JPEG and PNG are allowed");
+            }
+
+            if (!photoService.isFileSizeValid(file)) {
+                return ResponseEntity.badRequest().body("File size exceeds 5MB limit");
+            }
+
+            String fileName = photoService.savePhoto(file, attendanceId);
+            attendance.setPhotoPath(fileName);
+            attendance.setPhotoStatus("CAPTURED");
+            attendanceRepository.save(attendance);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "Photo captured and saved successfully");
+            response.put("photoPath", fileName);
+            return ResponseEntity.ok(response);
+
+        } catch (IOException e) {
+            return ResponseEntity.status(500).body("Failed to save photo: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/{attendanceId}/photo")
+    public ResponseEntity<?> getPhoto(@PathVariable int attendanceId) {
+        try {
+            Attendance attendance = attendanceRepository.findById(attendanceId).orElse(null);
+            if (attendance == null || attendance.getPhotoPath() == null) {
+                return ResponseEntity.notFound().build();
+            }
+
+            byte[] photoData = photoService.getPhoto(attendance.getPhotoPath());
+            String contentType = attendance.getPhotoPath().endsWith(".png") ? MediaType.IMAGE_PNG_VALUE : MediaType.IMAGE_JPEG_VALUE;
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, contentType)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + attendance.getPhotoPath() + "\"")
+                    .body(photoData);
+
+        } catch (IOException e) {
+            return ResponseEntity.status(404).body("Photo not found");
+        }
+    }
+
+    @GetMapping("/student/{studentId}/photos")
+    public ResponseEntity<?> getStudentPhotos(@PathVariable int studentId) {
+        try {
+            List<Attendance> attendanceList = attendanceRepository.findByStudentIdAndPhotoPathIsNotNullOrderByScanTimeDesc(studentId);
+            List<Map<String, Object>> response = new ArrayList<>();
+
+            for (Attendance attendance : attendanceList) {
+                Map<String, Object> photoData = new HashMap<>();
+                photoData.put("attendanceId", attendance.getId());
+                photoData.put("photoUrl", "/attendance/" + attendance.getId() + "/photo");
+                photoData.put("photoPath", attendance.getPhotoPath());
+                photoData.put("timestamp", attendance.getScanTime());
+                photoData.put("className", attendance.getClassName());
+                photoData.put("status", attendance.getStatus());
+                response.add(photoData);
+            }
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Failed to retrieve photos: " + e.getMessage());
+        }
     }
 
     @GetMapping("/scanned/{cardId}")
@@ -122,11 +214,14 @@ public class AttendanceController {
             if (student != null) {
                 Map<String, Object> data = new HashMap<>();
                 data.put("id", student.getId());
+                data.put("attendanceId", attendance.getId());
                 data.put("name", student.getName());
                 data.put("studentNumber", student.getStudentNumber());
                 data.put("email", student.getEmail());
                 data.put("time", attendance.getScanTime());
                 data.put("status", attendance.getStatus());
+                data.put("photoStatus", attendance.getPhotoStatus());
+                data.put("hasPhoto", attendance.getPhotoPath() != null);
 
                 response.add(data);
             }
@@ -184,7 +279,6 @@ public class AttendanceController {
             LocalDate day = today.minusDays(i);
             String dayAbbr = day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
 
-            // only count cards scheduled on this specific day — no end-time gate
             Set<Integer> scheduledCardIds = new HashSet<>();
             Set<Integer> endedCardIds = new HashSet<>();
             long scheduledStudents = 0;
@@ -196,7 +290,6 @@ public class AttendanceController {
                 if (!days.contains(dayAbbr)) continue;
                 scheduledCardIds.add(c.getId());
                 scheduledStudents += studentRepository.findByCardId(c.getId()).size();
-                // for today: only count absent after class ends
                 if (!isToday || c.getEndTime() == null || nowTime.isAfter(c.getEndTime())) {
                     endedCardIds.add(c.getId());
                 }
@@ -212,7 +305,6 @@ public class AttendanceController {
                     else if ("Late".equals(a.getStatus())) late++;
                 }
             }
-            // absent only for cards whose class has ended
             for (Card c : cards) {
                 if (endedCardIds.contains(c.getId())) {
                     endedScheduledStudents += studentRepository.findByCardId(c.getId()).size();
@@ -239,7 +331,6 @@ public class AttendanceController {
         String todayAbbr = today.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
         LocalTime nowTime = LocalTime.now();
 
-        // totalStudents = ALL students across ALL teacher's cards
         long totalStudents = 0;
         Set<Integer> allCardIds = new HashSet<>();
         for (Card c : cards) {
@@ -247,7 +338,6 @@ public class AttendanceController {
             totalStudents += studentRepository.findByCardId(c.getId()).size();
         }
 
-        // only today's scheduled cards for absent calculation
         List<Card> todayCards = new ArrayList<>();
         for (Card c : cards) {
             if (c.getClassDays() == null || c.getClassDays().isEmpty()) continue;
@@ -279,7 +369,6 @@ public class AttendanceController {
             }
         }
 
-        // present/late from today's scheduled cards, absent only after class ends
         long present = 0, late = 0, absent = 0;
         for (Card c : todayCards) {
             long[] counts = scansByCard.getOrDefault(c.getId(), new long[2]);
@@ -367,5 +456,52 @@ public class AttendanceController {
     public String deleteAttendance(@PathVariable int id) {
         attendanceRepository.deleteById(id);
         return "Attendance with ID " + id + " deleted successfully.";
+    }
+
+    @PutMapping("/{attendanceId}/revoke")
+    public ResponseEntity<?> revokeAttendance(@PathVariable int attendanceId, Authentication authentication) {
+        try {
+            String teacherEmail = authentication.getName();
+
+            Attendance attendance = attendanceRepository.findById(attendanceId).orElse(null);
+            if (attendance == null) {
+                return ResponseEntity.status(404).body("Attendance record not found");
+            }
+
+            Card card = attendance.getCard();
+            if (card == null || !card.getTeacher().getEmail().equals(teacherEmail)) {
+                return ResponseEntity.status(403).body("Unauthorized: You do not have permission to revoke this attendance");
+            }
+
+            Student student = studentRepository.findById(attendance.getStudentId()).orElse(null);
+            if (student == null) {
+                return ResponseEntity.status(404).body("Student record not found");
+            }
+
+            String originalStatus = attendance.getStatus();
+            attendance.setStatus("Absent");
+            attendance.setRevokedAt(java.time.LocalDateTime.now());
+            attendance.setRevokedBy(teacherEmail);
+
+            boolean emailSent = emailService.sendRevokeNotification(student, attendance, attendance.getPhotoPath(), card.getTeacher());
+            attendance.setEmailSent(emailSent);
+
+            attendanceRepository.save(attendance);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "Attendance revoked successfully");
+            response.put("originalStatus", originalStatus);
+            response.put("newStatus", "Absent");
+            response.put("emailSent", emailSent);
+            response.put("studentEmail", student.getEmail());
+            response.put("revokedAt", attendance.getRevokedAt());
+            response.put("revokedBy", attendance.getRevokedBy());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("Failed to revoke attendance: " + e.getMessage());
+        }
     }
 }

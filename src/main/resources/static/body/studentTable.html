@@ -101,6 +101,7 @@
                             <th>Student ID</th>
                             <th>Email</th>
                             <th>Gender</th>
+                            <th>Photo</th>
                             <th>Generate</th>
                         </tr>
                         </thead>
@@ -114,6 +115,14 @@
     </div>
 </div>
 
+<!-- Photo Viewer Modal -->
+<div class="modal" id="photoViewerModal">
+    <div class="modal-content" style="max-width: 600px;">
+        <span class="close" onclick="studentMgr.closePhotoViewer()">&times;</span>
+        <h2>Attendance Photos</h2>
+        <div id="photoViewerContainer"></div>
+    </div>
+</div>
 
 <!-- Import Students Modal -->
 <div class="modal" id="importStudentModal">

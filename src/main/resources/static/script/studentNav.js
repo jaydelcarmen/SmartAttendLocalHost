@@ -230,7 +230,7 @@ class StudentNav {
                 fetch(`/cards/delete/${id}`, { method: 'DELETE' })
                     .then(res => {
                         if (res.ok) Swal.fire({ icon: 'success', title: 'Card has been deleted.', text: 'success', timer: 1000, showConfirmButton: false }).then(() => this.loadCards());
-                        else Swal.fire('Error', 'Could not delete card.', 'error');
+                        else return res.text().then(text => Swal.fire('Error', 'Could not delete card: ' + text, 'error'));
                     });
             });
     }
